@@ -1,0 +1,109 @@
+{
+  "dataset": {
+    "workspace": "hrsdyolo",
+    "project": "stamp-signature-qr",
+    "version": 1,
+    "url": "https://universe.roboflow.com/hrsdyolo/stamp-signature-qr/dataset/1"
+  },
+  "training": {
+    "base_model": "yolo11s.pt",
+    "epochs_run": 30,
+    "epochs_max": 30,
+    "imgsz": 640,
+    "batch": 16,
+    "patience": 10,
+    "seed": 0,
+    "device": "mps"
+  },
+  "weights": "weights/seal_yolo11s.pt",
+  "overall": {
+    "mAP50": 0.8238992874828258,
+    "mAP50-95": 0.61362230819905
+  },
+  "confusion_matrix": {
+    "labels": [
+      "Signature",
+      "Text",
+      "qr-code",
+      "stamp",
+      "background"
+    ],
+    "matrix": [
+      [
+        39,
+        0,
+        0,
+        0,
+        14
+      ],
+      [
+        0,
+        25,
+        0,
+        0,
+        43
+      ],
+      [
+        0,
+        0,
+        181,
+        0,
+        4
+      ],
+      [
+        0,
+        0,
+        0,
+        1192,
+        67
+      ],
+      [
+        2,
+        18,
+        3,
+        28,
+        0
+      ]
+    ],
+    "orientation": "rows predicted, columns true"
+  },
+  "coco_stand_in": "clock",
+  "positive_class": "unsealed page",
+  "chosen_cut": 0.78,
+  "chosen_band": {
+    "low": 0.51,
+    "high": 0.89
+  },
+  "test_band": {
+    "low": 0.51,
+    "high": 0.89,
+    "tp": 49.08615136876007,
+    "fp": 5.117900172117042,
+    "fn": 0.9138486312399358,
+    "tn": 944.8820998278829,
+    "reviews": 352.06304860574113,
+    "review_share": 0.3520630486057411,
+    "flagged": 54.20405154087711,
+    "cost": 6180.137381825439
+  },
+  "bootstrap_ci_cost": [
+    5339.83498443394,
+    7159.205842088159
+  ],
+  "t_star_if_calibrated": 0.97,
+  "staffing": {
+    "reviewed_per_day": 211.23782916344467,
+    "flagged_per_day": 32.52243092452627,
+    "hours_per_day": 6.963904190952909,
+    "associates": 1.1606506984921514
+  },
+  "costs": {
+    "fn": 2000.0,
+    "flag": 60.0,
+    "review": 3.125,
+    "base_rate": 0.05,
+    "associate_recall": 0.95,
+    "associate_specificity": 0.99,
+    "pages_per_day": 600
+  }
+}
