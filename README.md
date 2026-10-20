@@ -137,21 +137,3 @@ REPORT.md is not a row of its own. Its content lives in the other five, so its
 quality is already captured there. The five rows sum to 100% and form your
 subtotal. The Written Comprehension Check then multiplies that subtotal, so a
 strong submission with a weak check score is scaled down.
-
-## Generative AI use
-
-Per the syllabus AI Policy, disclosed AI use is fine and must be stated in
-REPORT.md's disclosure section. For this assignment specifically:
-
-- **Fine for**: boilerplate and common operations, such as downloading a
-  dataset, wiring up the training call, and plotting results.
-- **Your own judgement for**: the decisions this assignment grades. Which
-  problem to frame, what each kind of error costs, where the thresholds go, how
-  much goes to a person, and whether the model is good enough to ship. AI can
-  write the code for a decision. The decision has to be yours.
-- **REPORT.md**: the ideas and findings must be your own. AI may help with
-  formatting, not with the analysis or conclusions.
-
-You have to be able to explain every decision in your submission as if you made
-it yourself, because you did. Using a tool to write it does not transfer the
-understanding requirement to the tool.
