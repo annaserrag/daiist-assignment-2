@@ -69,38 +69,38 @@
   },
   "coco_stand_in": "clock",
   "positive_class": "unsealed page",
-  "chosen_cut": 0.78,
+  "chosen_cut": 0.83,
   "chosen_band": {
-    "low": 0.51,
-    "high": 0.89
+    "low": 0.78,
+    "high": 0.9025
   },
   "test_band": {
-    "low": 0.51,
-    "high": 0.89,
-    "tp": 49.08615136876007,
-    "fp": 5.117900172117042,
-    "fn": 0.9138486312399358,
-    "tn": 944.8820998278829,
-    "reviews": 352.06304860574113,
-    "review_share": 0.3520630486057411,
-    "flagged": 54.20405154087711,
-    "cost": 6180.137381825439
+    "low": 0.78,
+    "high": 0.9025,
+    "tp": 49.44041867954911,
+    "fp": 15.598967297762483,
+    "fn": 0.5595813204508857,
+    "tn": 934.4010327022376,
+    "reviews": 416.8482071834613,
+    "review_share": 0.4168482071834613,
+    "flagged": 65.0393859773116,
+    "cost": 2013.7646860734867
   },
   "bootstrap_ci_cost": [
-    5339.83498443394,
-    7159.205842088159
+    1294.106839134777,
+    2797.30572421963
   ],
-  "t_star_if_calibrated": 0.97,
+  "t_star_if_calibrated": 0.9947916666666666,
   "staffing": {
-    "reviewed_per_day": 211.23782916344467,
-    "flagged_per_day": 32.52243092452627,
-    "hours_per_day": 6.963904190952909,
-    "associates": 1.1606506984921514
+    "reviewed_per_day": 250.10892431007676,
+    "flagged_per_day": 39.02363158638696,
+    "hours_per_day": 8.588179633648467,
+    "associates": 1.4313632722747445
   },
   "costs": {
     "fn": 2000.0,
-    "flag": 60.0,
-    "review": 3.125,
+    "flag": 10.416666666666666,
+    "review": 0.5208333333333334,
     "base_rate": 0.05,
     "associate_recall": 0.95,
     "associate_specificity": 0.99,
