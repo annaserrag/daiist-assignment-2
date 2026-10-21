@@ -69,14 +69,20 @@ def clean_band(low, high):
 # --------------------------------------------------------------------------------
 # Inspect a page
 # --------------------------------------------------------------------------------
-def inspect_page(image, low, high):
+def detect_page(image):
+    """Run the model once per uploaded page; moving a threshold only redraws."""
     if image is None:
+        return None
+    result = MODEL.predict(image.convert("RGB"), conf=0.001, verbose=False)[0]
+    return list(zip(result.boxes.cls.tolist(), result.boxes.conf.tolist(),
+                    result.boxes.xyxy.tolist()))
+
+
+def draw_page(image, boxes, low, high):
+    if image is None or boxes is None:
         return None, "Upload a page, or pick one of the examples."
     low, high = clean_band(low, high)
     image = image.convert("RGB")
-    result = MODEL.predict(image, conf=0.001, verbose=False)[0]
-    boxes = list(zip(result.boxes.cls.tolist(), result.boxes.conf.tolist(),
-                     result.boxes.xyxy.tolist()))
     score = costing.page_score([(c, s) for c, s, _ in boxes], MODEL.names)
 
     # Draw what the model reports at the current threshold: every box at or above the
@@ -260,17 +266,28 @@ with gr.Blocks(title="Seal check") as demo:
         gr.Dataframe(COMPOSITION[COMPOSITION.split == "test"].round(4),
                      label="Test split composition")
 
-    page_in.change(inspect_page, [page_in, low, high], [page_out, verdict_md])
-    for control in (low, high, base_rate, pages_per_day):
-        control.change(operating_point, [low, high, base_rate, pages_per_day],
-                       [raw_table, projected_table, op_text, alt_table])
-    for control in (low, high, base_rate):
-        control.change(cost_curve, [low, high, base_rate], curve)
-    for control in (low, high):
-        control.change(inspect_page, [page_in, low, high], [page_out, verdict_md])
-    demo.load(operating_point, [low, high, base_rate, pages_per_day],
-              [raw_table, projected_table, op_text, alt_table])
-    demo.load(cost_curve, [low, high, base_rate], curve)
+    # The model's boxes for the current page, kept so a threshold move only redraws.
+    page_boxes = gr.State()
+
+    def refresh(low, high, base_rate, pages_per_day, image, boxes):
+        """Every view that depends on the thresholds, in one round trip."""
+        return (*operating_point(low, high, base_rate, pages_per_day),
+                cost_curve(low, high, base_rate),
+                *draw_page(image, boxes, low, high))
+
+    controls = [low, high, base_rate, pages_per_day]
+    refresh_inputs = controls + [page_in, page_boxes]
+    refresh_outputs = [raw_table, projected_table, op_text, alt_table, curve,
+                       page_out, verdict_md]
+
+    page_in.change(detect_page, page_in, page_boxes).then(
+        draw_page, [page_in, page_boxes, low, high], [page_out, verdict_md])
+    # .input, not .change: a slider with a fine step keeps re-rounding its own value
+    # and firing .change in a loop, while .input only fires when someone moves it.
+    # always_last drops the intermediate positions of a drag and computes the last one.
+    gr.on([c.input for c in controls], refresh, refresh_inputs, refresh_outputs,
+          trigger_mode="always_last", show_progress="hidden")
+    demo.load(refresh, refresh_inputs, refresh_outputs)
 
 
 if __name__ == "__main__":
