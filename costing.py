@@ -26,12 +26,14 @@ STAMP_CLASS = "stamp"
 # Costs per page, in EUR (REPORT.md, "Cost matrix and operating point").
 COST_FN = 2_000.0       # unsealed page passed as sealed: 2% chance it becomes a
                         # EUR 100k problem after closing (indemnity, price chip)
-COST_FLAG = 60.0        # any page flagged as unsealed (TP or FP): ten minutes of
-                        # associate time to raise it with the seller, at EUR 375/hour
+ASSOCIATE_RATE = 3_000 / (6 * 8)  # EUR 62.50 an hour: the A1 day of EUR 3,000 covers
+                                  # a team of six associates for eight hours
+FLAG_MINUTES = 10       # raising one flagged page with the seller and closing it
+COST_FLAG = ASSOCIATE_RATE * FLAG_MINUTES / 60  # about EUR 10.42, any page flagged as
+                                                # unsealed (TP or FP)
 COST_TN = 0.0           # a sealed page passed: nothing happens
-ASSOCIATE_RATE = 375.0  # EUR per hour, the A1 day rate (EUR 3,000 / 8 hours)
 REVIEW_SECONDS = 30     # one page checked by eye for a seal
-COST_REVIEW = ASSOCIATE_RATE * REVIEW_SECONDS / 3600  # about EUR 3.13 a page
+COST_REVIEW = ASSOCIATE_RATE * REVIEW_SECONDS / 3600  # about EUR 0.52 a page
 
 # The associate is a second classifier, not an oracle (Session 11, section 6).
 ASSOCIATE_RECALL = 0.95       # shown an unsealed page, notices 95% of the time
@@ -152,7 +154,7 @@ def staffing(review_share, pages_per_day=PAGES_PER_DAY, flagged_per_1000=0.0):
     """Associate hours a day for the review queue plus raising flagged pages."""
     reviewed = review_share * pages_per_day
     flagged = flagged_per_1000 / PER * pages_per_day
-    hours = reviewed * REVIEW_SECONDS / 3600 + flagged * COST_FLAG / ASSOCIATE_RATE
+    hours = reviewed * REVIEW_SECONDS / 3600 + flagged * FLAG_MINUTES / 60
     return {
         "reviewed_per_day": reviewed,
         "flagged_per_day": flagged,
