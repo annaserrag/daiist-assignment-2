@@ -91,6 +91,28 @@
     2797.30572421963
   ],
   "t_star_if_calibrated": 0.9947916666666666,
+  "leakage": {
+    "exact_duplicate_sealed_pages": {
+      "val": 25,
+      "test": 17
+    },
+    "clean_band": {
+      "low": 0.78,
+      "high": 0.9025
+    },
+    "clean_test_band": {
+      "low": 0.78,
+      "high": 0.9025,
+      "tp": 49.21800947867298,
+      "fp": 17.416666666666668,
+      "fn": 0.7819905213270143,
+      "tn": 932.5833333333334,
+      "reviews": 105.15743313177535,
+      "review_share": 0.10515743313177535,
+      "flagged": 66.63467614533965,
+      "cost": 2312.8617489241165
+    }
+  },
   "staffing": {
     "reviewed_per_day": 250.10892431007676,
     "flagged_per_day": 39.02363158638696,

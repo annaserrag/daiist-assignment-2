@@ -10,7 +10,7 @@ or fail.
 
 Run with `uv run python main.py train`. The script is meant to be read top to bottom:
 
-    Part 1  The dataset           download it and describe it before training on it
+    Part 1  The dataset           download it, describe it and check it for leakage
     Part 2  Finetuning            yolo11s from its COCO checkpoint
     Part 3  Evaluation            per class, against COCO zero-shot and predict-nothing
     Part 4  From boxes to pages   one score per page, and a stress test with seals removed
@@ -160,6 +160,126 @@ print(
 )
 
 
+# %% 1.4 Leakage between the splits. Roboflow renames and re-encodes every image, so no
+# file name is shared across splits and a copy can only be found by its pixels. Each
+# validation and test page is compared with every training page as 64x64 grayscale
+# (also mirrored), and the correlation of the best match decides:
+#   - exact duplicate: the same page with the same labelled boxes as its training twin.
+#     That is real leakage: the model has seen this very answer.
+#   - shared document: the same underlying page with DIFFERENT stamps. The author made
+#     many stamp pages by pasting stamps onto the same letters, so stamp pages are
+#     compared with every stamp blanked out. The stamp to find is new, so this is not
+#     leakage of the answer, but the background was seen in training.
+#   - clean: no training page closer than 0.80 once the stamps are blanked.
+# Thresholds were set by looking at matched pairs by eye: at 0.90 and above they are
+# the same page, below 0.80 different pages (some share a template or a seal design).
+section("1.4 Leakage between the splits")
+SIM_SIZE = 64
+
+
+def to_xyxy(cx, cy, w, h):
+    return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+
+
+def iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def page_pixels(split):
+    """Every page as 64x64 grayscale, plus a mask that is False over its stamps."""
+    paths = image_paths(split)
+    pixels = np.stack([
+        np.asarray(Image.open(p).convert("L").resize((SIM_SIZE, SIM_SIZE),
+                                                     Image.BILINEAR), np.float32)
+        for p in paths
+    ])
+    keep = np.ones_like(pixels, dtype=bool)
+    for k, path in enumerate(paths):
+        for c, cx, cy, w, h in read_labels(split, path.stem):
+            if c == STAMP_ID:  # 2% margin so the stamp's edge goes too
+                x0, y0, x1, y1 = to_xyxy(cx, cy, w + 0.04, h + 0.04)
+                keep[k, int(max(0, y0 * SIM_SIZE)):int(min(SIM_SIZE, np.ceil(y1 * SIM_SIZE))),
+                     int(max(0, x0 * SIM_SIZE)):int(min(SIM_SIZE, np.ceil(x1 * SIM_SIZE)))] = False
+    return paths, pixels, keep
+
+
+def standardise(flat):
+    return (flat - flat.mean(1, keepdims=True)) / (flat.std(1, keepdims=True) + 1e-6)
+
+
+train_paths, train_px, train_keep = page_pixels("train")
+train_z = standardise(train_px.reshape(len(train_paths), -1))
+train_z_flip = standardise(train_px[:, :, ::-1].reshape(len(train_paths), -1))
+
+
+def leakage_table(split):
+    paths, px, keep = page_pixels(split)
+    z = standardise(px.reshape(len(paths), -1))
+    straight, mirrored = z @ train_z.T / z.shape[1], z @ train_z_flip.T / z.shape[1]
+    rows = []
+    for i, path in enumerate(paths):
+        labels = read_labels(split, path.stem)
+        classes = " + ".join(sorted({CLASS_NAMES[c] for c, *_ in labels}))
+        flipped = mirrored[i].max() > straight[i].max()
+        twin = int(mirrored[i].argmax() if flipped else straight[i].argmax())
+        similarity = float(max(straight[i].max(), mirrored[i].max()))
+
+        # Same boxes as the twin? Then it is the same answer, not only the same page.
+        twin_boxes = [(c, *to_xyxy(*b)) for c, *b in read_labels("train", train_paths[twin].stem)]
+        if flipped:
+            twin_boxes = [(c, 1 - x1, y0, 1 - x0, y1) for c, x0, y0, x1, y1 in twin_boxes]
+        same_boxes = bool(labels) and all(
+            any(t[0] == c and iou(to_xyxy(*b), t[1:]) >= 0.5 for t in twin_boxes)
+            for c, *b in labels
+        )
+
+        # Stamp pages: compare the documents with every stamp blanked, on the 25 closest
+        # training pages, so different pasted stamps do not hide the same letter.
+        without_stamps = similarity
+        if classes == "stamp":
+            without_stamps = -1.0
+            for j in np.argsort(-np.maximum(straight[i], mirrored[i]))[:25]:
+                for mirror in (False, True):
+                    other = train_px[j][:, ::-1] if mirror else train_px[j]
+                    other_keep = train_keep[j][:, ::-1] if mirror else train_keep[j]
+                    both = (keep[i] & other_keep).ravel()
+                    if both.sum() < 0.5 * SIM_SIZE ** 2:
+                        continue
+                    a, b = px[i].ravel()[both], other.ravel()[both]
+                    r = float(np.corrcoef(a, b)[0, 1]) if a.std() > 0 and b.std() > 0 else 0.0
+                    without_stamps = max(without_stamps, r)
+
+        if similarity >= 0.90 and same_boxes:
+            kind = "exact duplicate"
+        elif without_stamps >= 0.90:
+            kind = "shared document"
+        elif classes == "stamp" and without_stamps >= 0.80:
+            kind = "ambiguous"  # mostly different pages built on the same template
+        else:
+            kind = "clean"
+        rows.append({"split": split, "stem": path.stem, "classes": classes,
+                     "similarity": similarity, "similarity_without_stamps": without_stamps,
+                     "closest_train": train_paths[twin].name, "kind": kind})
+    return pd.DataFrame(rows)
+
+
+leakage = pd.concat([leakage_table("val"), leakage_table("test")], ignore_index=True)
+print(pd.crosstab([leakage.split, leakage.classes], leakage.kind, margins=True).to_string())
+for split in ("val", "test"):
+    exact = leakage.query("split == @split and classes == 'stamp' and kind == 'exact duplicate'")
+    print(f"{split}: {len(exact)} sealed pages are exact duplicates of a training page")
+print(
+    "\nOnly the exact duplicates leak the answer. Shared documents carry a different stamp,"
+    "\nso they do not show the model where the seal is, but it has seen that background,"
+    "\nwhich can make false alarms on it look rarer. Sections 3.5 and 5.7 re-run the"
+    "\nevaluation and the band choice on clean pages only to measure how much it matters."
+)
+
+
 # =================================================================================
 # PART 2 — FINETUNING
 # =================================================================================
@@ -267,18 +387,6 @@ def predict_split(model, paths):
     return out
 
 
-def to_xyxy(cx, cy, w, h):
-    return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
-
-
-def iou(a, b):
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
-    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    inter = ix * iy
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / union if union > 0 else 0.0
-
-
 def class_ap50(predictions, split, true_class, predicted_class=None):
     """AP50, and precision/recall at conf 0.25, for one class, the Session 9 way.
 
@@ -369,6 +477,36 @@ print(
     "\nbaselines score 0 AP on them by construction; the per-class table in 3.1 is the"
     "\ncomparison that matters there."
 )
+
+# %% 3.5 Does the leakage from 1.4 flatter the model? The same Ultralytics validation on
+# two subsets of test: clean pages (nothing like them in training) and leaked pages
+# (exact duplicates or shared documents). Ambiguous pages are left out of both.
+section("3.5 Stamp class on clean vs leaked test pages")
+LEAK_GROUPS = {"clean": ["clean"], "leaked": ["exact duplicate", "shared document"]}
+leak_metrics = []
+for group, kinds in LEAK_GROUPS.items():
+    stems = leakage.query("split == 'test' and kind in @kinds")["stem"]
+    listing = DATASETS / f"test_{group}.txt"
+    listing.write_text("\n".join(
+        str(DATASET_DIR / "test" / "images" / f"{s}.jpg") for s in stems))
+    subset_yaml = DATASETS / f"test_{group}.yaml"
+    subset_yaml.write_text(
+        f"train: {listing}\nval: {listing}\ntest: {listing}\nnames:\n"  # all three keys required
+        + "".join(f"  {i}: {name}\n" for i, name in enumerate(CLASS_NAMES)))
+    subset = finetuned.val(
+        data=str(subset_yaml), split="test", imgsz=IMGSZ, device=DEVICE, plots=False,
+        project=str(RUNS), name=f"seal_test_{group}", exist_ok=True, verbose=False,
+    ).box
+    row = list(subset.ap_class_index).index(STAMP_ID)
+    leak_metrics.append({
+        "test pages": group,
+        "sealed pages": int((leakage.query("split == 'test' and kind in @kinds")
+                             ["classes"] == "stamp").sum()),
+        "precision": float(subset.p[row]), "recall": float(subset.r[row]),
+        "AP50": float(subset.ap50[row]), "AP50-95": float(subset.ap[row]),
+    })
+leak_metrics = pd.DataFrame(leak_metrics)
+print(leak_metrics.round(3).to_string(index=False))
 
 
 # =================================================================================
@@ -463,13 +601,22 @@ for split, table in masked.items():
           f"{table.score.median():.3f}, {int((table.score >= 0.5).sum())} still score >= 0.5")
 
 
-def decision_sets(model, split, stress=True):
-    """(unsealed scores, sealed scores) for the page-level decision."""
+def decision_sets(model, split, stress=True, kinds=None):
+    """(unsealed scores, sealed scores) for the page-level decision.
+
+    kinds keeps only pages of those leakage kinds (1.4); a stress page shares the stem
+    of the sealed page it was made from, so it follows that page's kind.
+    """
     table = pages[(model, split)]
     docs = table[table.source == "document"]
+    stress_pages = masked[split]
+    if kinds is not None:
+        allowed = set(leakage.query("split == @split and kind in @kinds")["stem"])
+        docs = docs[docs.stem.isin(allowed)]
+        stress_pages = stress_pages[stress_pages.stem.isin(allowed)]
     unsealed = docs.loc[~docs.sealed, "score"].to_numpy()
     if model == "finetuned" and stress:
-        unsealed = np.concatenate([unsealed, masked[split]["score"].to_numpy()])
+        unsealed = np.concatenate([unsealed, stress_pages["score"].to_numpy()])
     return unsealed, docs.loc[docs.sealed, "score"].to_numpy()
 
 
@@ -620,6 +767,20 @@ for label, kwargs in [
 sensitivity = pd.DataFrame(sensitivity)
 print(sensitivity.round(4).to_string(index=False))
 
+# %% 5.7 The band without leakage. Chosen again on clean validation pages only and priced
+# on clean test pages only, so neither the choice nor the check has seen a page whose
+# document was in training (1.4).
+section("5.7 The band on clean pages only")
+clean_choice = costing.rank_bands(*decision_sets("finetuned", "val", kinds=["clean"]))[0]
+clean_band = costing.three_way_cost(*decision_sets("finetuned", "test", kinds=["clean"]),
+                                    clean_choice["low"], clean_choice["high"])
+clean_unsealed, clean_sealed = decision_sets("finetuned", "test", kinds=["clean"])
+print(f"band chosen on clean validation: [{clean_choice['low']:.4f}, {clean_choice['high']:.4f})"
+      f"   (all pages: [{LOW:.4f}, {HIGH:.4f}))")
+print(f"on {len(clean_sealed)} clean sealed + {len(clean_unsealed)} clean unsealed test pages: "
+      f"EUR {clean_band['cost']:,.0f} per 1,000, reviewed {clean_band['review_share']:.1%}, "
+      f"FN {clean_band['fn']:.2f}   (all pages: EUR {test_band['cost']:,.0f})")
+
 
 # =================================================================================
 # PART 6 — SAVE WHAT THE APP NEEDS
@@ -638,6 +799,8 @@ reliability.to_csv(ARTIFACTS / "reliability.csv", index=False)
 sweeps["test"].to_csv(ARTIFACTS / "sweep_test.csv", index=False)
 sweeps["val"].to_csv(ARTIFACTS / "sweep_val.csv", index=False)
 history.to_csv(ARTIFACTS / "training_history.csv", index=False)
+leakage.to_csv(ARTIFACTS / "leakage.csv", index=False)
+leak_metrics.to_csv(ARTIFACTS / "leakage_metrics.csv", index=False)
 pd.concat([
     pages[("finetuned", "test")].assign(split="test"),
     masked["test"].assign(split="test"),
@@ -661,6 +824,14 @@ summary_json = {
     "test_band": test_band,
     "bootstrap_ci_cost": boot_ci,
     "t_star_if_calibrated": T_STAR,
+    "leakage": {
+        "exact_duplicate_sealed_pages": {
+            split: int(len(leakage.query(
+                "split == @split and classes == 'stamp' and kind == 'exact duplicate'")))
+            for split in ("val", "test")},
+        "clean_band": {"low": clean_choice["low"], "high": clean_choice["high"]},
+        "clean_test_band": clean_band,
+    },
     "staffing": staff,
     "costs": {"fn": costing.COST_FN, "flag": costing.COST_FLAG,
               "review": costing.COST_REVIEW, "base_rate": costing.BASE_RATE,
